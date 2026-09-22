@@ -1,8 +1,11 @@
 import os
 import json
 import base64
+import asyncio
+import threading
 import aiohttp
 
+from flask import Flask
 from telethon import TelegramClient, events
 
 
@@ -20,6 +23,33 @@ MODEL = "openrouter/free"
 MEMORY_LIMIT = 100
 
 ALLOWED_FILE = "allowed_users.json"
+
+
+# =========================
+# WEB-СЕРВЕР ДЛЯ RENDER
+# =========================
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+    return "Nicole is running", 200
+
+
+@app.route("/health")
+def health():
+    return "OK", 200
+
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        use_reloader=False
+    )
 
 
 # =========================
@@ -47,7 +77,7 @@ if os.path.exists(ALLOWED_FILE):
     try:
         with open(ALLOWED_FILE, "r", encoding="utf-8") as f:
             allowed_users = set(json.load(f))
-    except:
+    except Exception:
         allowed_users = set()
 else:
     allowed_users = set()
@@ -233,7 +263,7 @@ async def commands(event):
                 f"❌ @{username} удалён."
             )
 
-        except:
+        except Exception:
 
             await event.respond(
                 "❌ Пользователь не найден."
@@ -267,7 +297,7 @@ async def commands(event):
                 else:
                     result.append(str(user_id))
 
-            except:
+            except Exception:
 
                 result.append(str(user_id))
 
@@ -293,7 +323,7 @@ async def commands(event):
                 f"🧹 Память переписки с @{username} очищена."
             )
 
-        except:
+        except Exception:
 
             await event.respond(
                 "❌ Пользователь не найден."
@@ -383,13 +413,13 @@ async def ai_handler(event):
 
 
 # =========================
-# ЗАПУСК
+# ЗАПУСК TELEGRAM
 # =========================
 
 async def main():
 
     print("================================")
-    print("      NICOLE AI")
+    print("          NICOLE AI")
     print("================================")
 
     print("Запуск Telegram...")
@@ -427,5 +457,14 @@ async def main():
 # =========================
 
 if __name__ == "__main__":
-    import asyncio
+
+    # Запускаем HTTP-сервер для Render
+    web_thread = threading.Thread(
+        target=run_web_server,
+        daemon=True
+    )
+
+    web_thread.start()
+
+    # Запускаем Telegram
     asyncio.run(main())
