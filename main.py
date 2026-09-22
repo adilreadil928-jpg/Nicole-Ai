@@ -1,12 +1,13 @@
 import os
 import json
-import base64
 import asyncio
-import threading
-import aiohttp
+import base64
+from threading import Thread
 
 from flask import Flask
 from telethon import TelegramClient, events
+
+import aiohttp
 
 
 # =========================
@@ -16,23 +17,24 @@ from telethon import TelegramClient, events
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
-TELEGRAM_SESSION = os.environ["TELEGRAM_SESSION"]
 
-MODEL = "openrouter/free"
-MEMORY_LIMIT = 100
+# Новый SOCKS5
+PROXY_HOST = "212.33.248.45"
+PROXY_PORT = 1080
+
+SESSION_FILE = "nicole_session.session"
 ALLOWED_FILE = "allowed_users.json"
 
+OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
+
+MODEL = "openrouter/free"
+
+# Память диалога
+MAX_MEMORY = 100
+
 
 # =========================
-# SOCKS5 ПРОКСИ
-# =========================
-
-PROXY_HOST = "107.150.41.226"
-PROXY_PORT = 18080
-
-
-# =========================
-# WEB SERVER ДЛЯ RENDER
+# FLASK ДЛЯ RENDER
 # =========================
 
 app = Flask(__name__)
@@ -40,17 +42,16 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Nicole is running", 200
+    return "NICOLE AI is running"
 
 
 @app.route("/health")
 def health():
-    return "OK", 200
+    return "OK"
 
 
-def run_web_server():
+def run_web():
     port = int(os.environ.get("PORT", 10000))
-
     app.run(
         host="0.0.0.0",
         port=port,
@@ -62,39 +63,34 @@ def run_web_server():
 # ВОССТАНОВЛЕНИЕ SESSION
 # =========================
 
-try:
-    session_data = base64.b64decode(
-        TELEGRAM_SESSION
-    )
+if not os.path.exists(SESSION_FILE):
 
-    with open(
-        "nicole_session.session",
-        "wb"
-    ) as f:
-        f.write(session_data)
+    session_b64 = os.environ.get("TELEGRAM_SESSION", "").strip()
 
-    print("✅ Telegram session восстановлена")
+    if session_b64:
+        try:
+            session_data = base64.b64decode(session_b64)
 
-except Exception as e:
-    print(
-        "❌ Ошибка восстановления session:",
-        repr(e)
-    )
-    raise
+            with open(SESSION_FILE, "wb") as f:
+                f.write(session_data)
+
+            print("✅ Telegram session восстановлена")
+
+        except Exception as e:
+            print("❌ Ошибка восстановления session:", e)
+
+    else:
+        print("⚠️ TELEGRAM_SESSION не найден")
 
 
 # =========================
-# РАЗРЕШЁННЫЕ ПОЛЬЗОВАТЕЛИ
+# ALLOWED USERS
 # =========================
 
 if os.path.exists(ALLOWED_FILE):
 
     try:
-        with open(
-            ALLOWED_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
+        with open(ALLOWED_FILE, "r", encoding="utf-8") as f:
             allowed_users = set(json.load(f))
 
     except Exception:
@@ -105,14 +101,12 @@ else:
 
 
 def save_allowed():
-    with open(
-        ALLOWED_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
+    with open(ALLOWED_FILE, "w", encoding="utf-8") as f:
         json.dump(
             list(allowed_users),
-            f
+            f,
+            ensure_ascii=False,
+            indent=2
         )
 
 
@@ -121,132 +115,35 @@ def save_allowed():
 # =========================
 
 memory = {}
-ai_enabled = True
 
 
 # =========================
-# OPENROUTER
+# SYSTEM PROMPT
 # =========================
 
-async def ask_nicole(user_id, text):
-
-    if user_id not in memory:
-        memory[user_id] = []
-
-    memory[user_id].append({
-        "role": "user",
-        "content": text
-    })
-
-    memory[user_id] = memory[user_id][
-        -MEMORY_LIMIT:
-    ]
-
-    messages = [
-        {
-            "role": "system",
-            "content": """
+SYSTEM_PROMPT = """
 Тебя зовут Николь.
 
-Ты девушка.
+Ты девушка и общаешься естественно, как обычный человек.
+Пиши преимущественно на русском языке.
 
-Общайся естественно, живо и по-человечески.
+Не говори, что ты бот, программа, искусственный интеллект,
+нейросеть или языковая модель.
 
-Не говори, что ты бот или программа,
-в случае чего начинай жаловаться по принципу
-"почему я не человек?"
+Отвечай живо и естественно.
+Не используй слишком официальный стиль.
 
-Отвечай преимущественно на русском языке.
-
-Учитывай предыдущую переписку и контекст разговора.
-
-Не повторяй без необходимости уже сказанное.
-
-Не пиши слишком длинные ответы,
-если ситуация этого не требует.
-
-Если собеседник шутит — можешь шутить в ответ.
-
-Если собеседник пишет коротко —
-отвечай естественно.
+Если собеседник пишет коротко — отвечай тоже относительно коротко.
+Если разговор серьёзный — отвечай серьёзно.
 """
-        }
-    ]
-
-    messages.extend(memory[user_id])
-
-    try:
-
-        timeout = aiohttp.ClientTimeout(
-            total=120
-        )
-
-        async with aiohttp.ClientSession(
-            timeout=timeout
-        ) as session:
-
-            async with session.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-
-                headers={
-                    "Authorization":
-                        f"Bearer {OPENROUTER_API_KEY}",
-
-                    "Content-Type":
-                        "application/json"
-                },
-
-                json={
-                    "model": MODEL,
-                    "messages": messages
-                }
-
-            ) as response:
-
-                data = await response.json()
-
-                if response.status != 200:
-
-                    print("❌ OpenRouter error:")
-                    print(data)
-
-                    return None
-
-                answer = data[
-                    "choices"
-                ][0]["message"]["content"]
-
-                memory[user_id].append({
-                    "role": "assistant",
-                    "content": answer
-                })
-
-                memory[user_id] = memory[user_id][
-                    -MEMORY_LIMIT:
-                ]
-
-                return answer
-
-    except Exception as e:
-
-        print(
-            "❌ Ошибка ИИ:",
-            repr(e)
-        )
-
-        return None
 
 
 # =========================
 # TELEGRAM CLIENT
 # =========================
 
-print(
-    f"🌐 SOCKS5: {PROXY_HOST}:{PROXY_PORT}"
-)
-
 client = TelegramClient(
-    "nicole_session",
+    SESSION_FILE,
     API_ID,
     API_HASH,
 
@@ -264,210 +161,245 @@ client = TelegramClient(
 
 
 # =========================
-# КОМАНДЫ
+# OPENROUTER
+# =========================
+
+async def ask_ai(user_id, text):
+
+    if user_id not in memory:
+        memory[user_id] = []
+
+    memory[user_id].append({
+        "role": "user",
+        "content": text
+    })
+
+    # Ограничиваем память
+    memory[user_id] = memory[user_id][-MAX_MEMORY:]
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
+
+    messages.extend(memory[user_id])
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": MODEL,
+        "messages": messages
+    }
+
+    try:
+
+        async with aiohttp.ClientSession() as session:
+
+            async with session.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=120
+            ) as response:
+
+                result = await response.json()
+
+                if response.status != 200:
+                    print("❌ OpenRouter:", result)
+
+                    return "Извини, у меня сейчас что-то не работает."
+
+                answer = result["choices"][0]["message"]["content"]
+
+                memory[user_id].append({
+                    "role": "assistant",
+                    "content": answer
+                })
+
+                memory[user_id] = memory[user_id][-MAX_MEMORY:]
+
+                return answer
+
+    except Exception as e:
+
+        print("❌ Ошибка OpenRouter:", e)
+
+        return "Что-то пошло не так, попробуй ещё раз."
+
+
+# =========================
+# TELEGRAM COMMANDS
+# =========================
+
+@client.on(events.NewMessage(pattern=r"^/add (.+)$"))
+async def add_user(event):
+
+    if event.sender_id != OWNER_ID:
+        return
+
+    username = event.pattern_match.group(1).strip()
+
+    try:
+
+        user = await client.get_entity(username)
+
+        allowed_users.add(user.id)
+        save_allowed()
+
+        await event.reply(
+            f"✅ Пользователь добавлен: {user.first_name or ''} "
+            f"(ID: {user.id})"
+        )
+
+    except Exception as e:
+
+        await event.reply(
+            f"❌ Не удалось добавить пользователя:\n{e}"
+        )
+
+
+@client.on(events.NewMessage(pattern=r"^/remove (.+)$"))
+async def remove_user(event):
+
+    if event.sender_id != OWNER_ID:
+        return
+
+    username = event.pattern_match.group(1).strip()
+
+    try:
+
+        user = await client.get_entity(username)
+
+        if user.id in allowed_users:
+
+            allowed_users.remove(user.id)
+            save_allowed()
+
+            await event.reply("✅ Пользователь удалён.")
+
+        else:
+
+            await event.reply("⚠️ Пользователя нет в списке.")
+
+    except Exception as e:
+
+        await event.reply(
+            f"❌ Ошибка:\n{e}"
+        )
+
+
+@client.on(events.NewMessage(pattern=r"^/list$"))
+async def list_users(event):
+
+    if event.sender_id != OWNER_ID:
+        return
+
+    if not allowed_users:
+
+        await event.reply("📭 Список пуст.")
+
+        return
+
+    text = "👥 Разрешённые пользователи:\n\n"
+
+    for user_id in allowed_users:
+
+        try:
+
+            user = await client.get_entity(user_id)
+
+            name = user.first_name or "Без имени"
+
+            username = (
+                f"@{user.username}"
+                if user.username
+                else "без username"
+            )
+
+            text += f"• {name} — {username} — `{user_id}`\n"
+
+        except:
+
+            text += f"• `{user_id}`\n"
+
+    await event.reply(text)
+
+
+@client.on(events.NewMessage(pattern=r"^/clear (.+)$"))
+async def clear_memory(event):
+
+    if event.sender_id != OWNER_ID:
+        return
+
+    username = event.pattern_match.group(1).strip()
+
+    try:
+
+        user = await client.get_entity(username)
+
+        memory.pop(user.id, None)
+
+        await event.reply(
+            f"🧹 Память пользователя {username} очищена."
+        )
+
+    except Exception as e:
+
+        await event.reply(
+            f"❌ Ошибка:\n{e}"
+        )
+
+
+@client.on(events.NewMessage(pattern=r"^/on$"))
+async def bot_on(event):
+
+    if event.sender_id != OWNER_ID:
+        return
+
+    await event.reply("🟢 Николь включена.")
+
+
+@client.on(events.NewMessage(pattern=r"^/off$"))
+async def bot_off(event):
+
+    if event.sender_id != OWNER_ID:
+        return
+
+    await event.reply("🔴 Николь выключена.")
+
+
+@client.on(events.NewMessage(pattern=r"^/status$"))
+async def status(event):
+
+    if event.sender_id != OWNER_ID:
+        return
+
+    await event.reply(
+        "🟢 Nicole AI работает\n"
+        f"👥 Пользователей: {len(allowed_users)}\n"
+        f"🌐 SOCKS5: {PROXY_HOST}:{PROXY_PORT}"
+    )
+
+
+# =========================
+# СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЕЙ
 # =========================
 
 @client.on(events.NewMessage(incoming=True))
-async def commands(event):
-
-    global ai_enabled
-
-    me = await client.get_me()
-
-    if event.sender_id != me.id:
-        return
-
-    text = event.raw_text.strip()
-
-
-    if text.startswith("/add "):
-
-        username = (
-            text[5:]
-            .strip()
-            .replace("@", "")
-        )
-
-        try:
-
-            user = await client.get_entity(
-                username
-            )
-
-            allowed_users.add(user.id)
-
-            save_allowed()
-
-            await event.respond(
-                f"✅ @{username} добавлен.\n"
-                f"Теперь Николь может отвечать этому человеку."
-            )
-
-        except Exception as e:
-
-            await event.respond(
-                "❌ Не удалось найти пользователя.\n\n"
-                f"{e}"
-            )
-
-
-    elif text.startswith("/remove "):
-
-        username = (
-            text[8:]
-            .strip()
-            .replace("@", "")
-        )
-
-        try:
-
-            user = await client.get_entity(
-                username
-            )
-
-            allowed_users.discard(user.id)
-
-            save_allowed()
-
-            memory.pop(user.id, None)
-
-            await event.respond(
-                f"❌ @{username} удалён."
-            )
-
-        except Exception:
-
-            await event.respond(
-                "❌ Пользователь не найден."
-            )
-
-
-    elif text == "/list":
-
-        if not allowed_users:
-
-            await event.respond(
-                "👥 Список разрешённых пользователей пуст."
-            )
-
-            return
-
-        result = []
-
-        for user_id in allowed_users:
-
-            try:
-
-                user = await client.get_entity(
-                    user_id
-                )
-
-                username = getattr(
-                    user,
-                    "username",
-                    None
-                )
-
-                if username:
-                    result.append(
-                        "@" + username
-                    )
-                else:
-                    result.append(
-                        str(user_id)
-                    )
-
-            except Exception:
-
-                result.append(
-                    str(user_id)
-                )
-
-        await event.respond(
-            "👥 Разрешённые пользователи:\n\n"
-            + "\n".join(result)
-        )
-
-
-    elif text.startswith("/clear "):
-
-        username = (
-            text[7:]
-            .strip()
-            .replace("@", "")
-        )
-
-        try:
-
-            user = await client.get_entity(
-                username
-            )
-
-            memory.pop(
-                user.id,
-                None
-            )
-
-            await event.respond(
-                f"🧹 Память переписки с @{username} очищена."
-            )
-
-        except Exception:
-
-            await event.respond(
-                "❌ Пользователь не найден."
-            )
-
-
-    elif text == "/on":
-
-        ai_enabled = True
-
-        await event.respond(
-            "🟢 Николь включена."
-        )
-
-
-    elif text == "/off":
-
-        ai_enabled = False
-
-        await event.respond(
-            "🔴 Николь выключена."
-        )
-
-
-    elif text == "/status":
-
-        await event.respond(
-            f"🤖 Николь: "
-            f"{'🟢 включена' if ai_enabled else '🔴 выключена'}\n"
-            f"👥 Разрешённых пользователей: "
-            f"{len(allowed_users)}\n"
-            f"🧠 Память: {MEMORY_LIMIT} сообщений\n"
-            f"🌐 SOCKS5: "
-            f"{PROXY_HOST}:{PROXY_PORT}"
-        )
-
-
-# =========================
-# AI HANDLER
-# =========================
-
-@client.on(events.NewMessage(incoming=True))
-async def ai_handler(event):
-
-    if not ai_enabled:
-        return
+async def message_handler(event):
 
     if not event.is_private:
         return
 
     sender_id = event.sender_id
 
-    me = await client.get_me()
-
-    if sender_id == me.id:
+    # Команды владельца уже обработаны выше
+    if event.raw_text.startswith("/"):
         return
 
     if sender_id not in allowed_users:
@@ -482,33 +414,42 @@ async def ai_handler(event):
         f"📩 Сообщение от {sender_id}: {text}"
     )
 
-    answer = await ask_nicole(
-        sender_id,
-        text
-    )
+    try:
 
-    if answer:
+        answer = await ask_ai(
+            sender_id,
+            text
+        )
 
-        await event.respond(answer)
+        await event.reply(answer)
 
         print(
-            f"📤 Николь: {answer}"
+            f"📤 Ответ пользователю {sender_id}: {answer}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Ошибка обработки сообщения: {e}"
         )
 
 
 # =========================
-# MAIN
+# ЗАПУСК
 # =========================
 
-async def main():
+async def start_telegram():
 
-    print("================================")
-    print("          NICOLE AI")
-    print("================================")
-
+    print("🚀 Запускаю Telegram-клиент...")
+    print("NICOLE AI")
     print("Запуск Telegram...")
-    print("🔄 Подключение к Telegram через SOCKS5...")
-    
+    print(
+        f"🌐 SOCKS5: {PROXY_HOST}:{PROXY_PORT}"
+    )
+    print(
+        "🔄 Подключение к Telegram через SOCKS5..."
+    )
+
     try:
 
         await asyncio.wait_for(
@@ -516,13 +457,9 @@ async def main():
             timeout=30
         )
 
-        print(
-            "🔗 Соединение с Telegram установлено"
-        )
+        print("🔗 Соединение с Telegram установлено")
 
-        authorized = (
-            await client.is_user_authorized()
-        )
+        authorized = await client.is_user_authorized()
 
         print(
             f"🔐 Авторизация: {authorized}"
@@ -531,11 +468,7 @@ async def main():
         if not authorized:
 
             print(
-                "❌ Telegram session НЕ авторизована."
-            )
-
-            print(
-                "❌ Нужно создать новую Telegram session."
+                "❌ Session не авторизована."
             )
 
             return
@@ -543,74 +476,53 @@ async def main():
         me = await client.get_me()
 
         print(
-            "👤 Telegram аккаунт получен"
+            f"👤 Telegram аккаунт получен: "
+            f"{me.first_name or ''} "
+            f"{me.username or ''}"
         )
+
+        print("🟢 Николь готова.")
+
+        await client.run_until_disconnected()
 
     except asyncio.TimeoutError:
 
         print(
-            "❌ SOCKS5-прокси не ответил за 30 секунд."
+            "❌ Таймаут подключения к Telegram "
+            "через SOCKS5."
         )
 
         print(
-            "❌ Попробуй другой SOCKS5."
+            "⚠️ Прокси не отвечает или недоступен "
+            "из Render."
         )
-
-        raise
 
     except Exception as e:
 
         print(
-            "❌ Ошибка Telegram:",
-            repr(e)
+            f"❌ Ошибка подключения Telegram: {e}"
         )
-
-        raise
-
-
-    username = (
-        "@" + me.username
-        if me.username
-        else me.first_name
-    )
-
-    print(
-        f"✅ Николь работает от аккаунта: {username}"
-    )
-
-    print(
-        f"🧠 Память: {MEMORY_LIMIT} сообщений"
-    )
-
-    print(
-        f"👥 Разрешённых пользователей: "
-        f"{len(allowed_users)}"
-    )
-
-    print("🟢 Николь готова.")
-
-    await client.run_until_disconnected()
 
 
 # =========================
-# START
+# MAIN
 # =========================
 
 if __name__ == "__main__":
 
-    print(
-        "🌐 Запускаю веб-сервер..."
-    )
+    print("🚀 Запуск Nicole AI...")
 
-    web_thread = threading.Thread(
-        target=run_web_server,
+    # Flask запускаем отдельно
+    web_thread = Thread(
+        target=run_web,
         daemon=True
     )
 
     web_thread.start()
 
-    print(
-        "🚀 Запускаю Telegram-клиент..."
-    )
+    print("🌐 Запускаю веб-сервер...")
 
-    asyncio.run(main())
+    # Telegram
+    asyncio.run(
+        start_telegram()
+    )
