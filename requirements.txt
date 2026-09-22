@@ -2,3 +2,4 @@ telethon
 aiohttp
 flask
 gunicorn
+python-socks[asyncio]
