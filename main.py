@@ -210,7 +210,6 @@ async def commands(event):
 
     me = await client.get_me()
 
-    # Команды принимаем только от самого владельца
     if event.sender_id != me.id:
         return
 
@@ -381,11 +380,9 @@ async def ai_handler(event):
 
     me = await client.get_me()
 
-    # Не отвечать самому себе
     if sender_id == me.id:
         return
 
-    # Отвечать только разрешённым людям
     if sender_id not in allowed_users:
         return
 
@@ -424,9 +421,43 @@ async def main():
 
     print("Запуск Telegram...")
 
-    await client.start()
+    print("🔄 Подключение к Telegram...")
 
-    me = await client.get_me()
+    try:
+
+        await client.connect()
+
+        print("🔗 Соединение с Telegram установлено")
+
+        authorized = await client.is_user_authorized()
+
+        print(
+            f"🔐 Авторизация: {authorized}"
+        )
+
+        if not authorized:
+
+            print(
+                "❌ Telegram session НЕ авторизована"
+            )
+
+            return
+
+        me = await client.get_me()
+
+        print(
+            "👤 Telegram аккаунт получен"
+        )
+
+    except Exception as e:
+
+        print(
+            "❌ Ошибка Telegram:",
+            repr(e)
+        )
+
+        raise
+
 
     username = (
         "@" + me.username
@@ -458,7 +489,6 @@ async def main():
 
 if __name__ == "__main__":
 
-    # Запускаем HTTP-сервер для Render
     web_thread = threading.Thread(
         target=run_web_server,
         daemon=True
@@ -466,5 +496,4 @@ if __name__ == "__main__":
 
     web_thread.start()
 
-    # Запускаем Telegram
     asyncio.run(main())
