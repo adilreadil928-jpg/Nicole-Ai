@@ -19,7 +19,7 @@ API_HASH = os.environ["API_HASH"]
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 
 # Новый SOCKS5
-PROXY_HOST = "212.33.248.45"
+PROXY_HOST = "185.87.255.54"
 PROXY_PORT = 1080
 
 SESSION_FILE = "nicole_session.session"
