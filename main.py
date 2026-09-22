@@ -53,7 +53,7 @@ def run_web_server():
 
 
 # =========================
-# ВОССТАНОВЛЕНИЕ TELEGRAM SESSION
+# ВОССТАНОВЛЕНИЕ SESSION
 # =========================
 
 try:
@@ -65,7 +65,7 @@ try:
     print("✅ Telegram session восстановлена")
 
 except Exception as e:
-    print("❌ Ошибка восстановления session:", e)
+    print("❌ Ошибка восстановления session:", repr(e))
     raise
 
 
@@ -74,18 +74,38 @@ except Exception as e:
 # =========================
 
 if os.path.exists(ALLOWED_FILE):
+
     try:
-        with open(ALLOWED_FILE, "r", encoding="utf-8") as f:
+
+        with open(
+            ALLOWED_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
             allowed_users = set(json.load(f))
+
     except Exception:
+
         allowed_users = set()
+
 else:
+
     allowed_users = set()
 
 
 def save_allowed():
-    with open(ALLOWED_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(allowed_users), f)
+
+    with open(
+        ALLOWED_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            list(allowed_users),
+            f
+        )
 
 
 # =========================
@@ -98,7 +118,7 @@ ai_enabled = True
 
 
 # =========================
-# НИКОЛЬ
+# НИКОЛЬ / OPENROUTER
 # =========================
 
 async def ask_nicole(user_id, text):
@@ -142,22 +162,29 @@ async def ask_nicole(user_id, text):
 
     try:
 
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(
+            total=120
+        )
+
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:
 
             async with session.post(
+
                 "https://openrouter.ai/api/v1/chat/completions",
 
                 headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json"
+                    "Authorization":
+                        f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type":
+                        "application/json"
                 },
 
                 json={
                     "model": MODEL,
                     "messages": messages
-                },
-
-                timeout=aiohttp.ClientTimeout(total=120)
+                }
 
             ) as response:
 
@@ -165,37 +192,57 @@ async def ask_nicole(user_id, text):
 
                 if response.status != 200:
 
-                    print("❌ OpenRouter error:")
+                    print(
+                        "❌ OpenRouter error:"
+                    )
+
                     print(data)
 
                     return None
 
-                answer = data["choices"][0]["message"]["content"]
+                answer = (
+                    data["choices"][0]
+                    ["message"]["content"]
+                )
 
                 memory[user_id].append({
                     "role": "assistant",
                     "content": answer
                 })
 
-                memory[user_id] = memory[user_id][-MEMORY_LIMIT:]
+                memory[user_id] = (
+                    memory[user_id][-MEMORY_LIMIT:]
+                )
 
                 return answer
 
     except Exception as e:
 
-        print("❌ Ошибка ИИ:", e)
+        print(
+            "❌ Ошибка ИИ:",
+            repr(e)
+        )
 
         return None
 
 
 # =========================
-# TELEGRAM
+# TELEGRAM CLIENT
 # =========================
 
 client = TelegramClient(
+
     "nicole_session",
+
     API_ID,
-    API_HASH
+
+    API_HASH,
+
+    connection_retries=10,
+
+    retry_delay=5,
+
+    timeout=60
 )
 
 
@@ -220,25 +267,38 @@ async def commands(event):
 
     if text.startswith("/add "):
 
-        username = text[5:].strip().replace("@", "")
+        username = (
+            text[5:]
+            .strip()
+            .replace("@", "")
+        )
 
         try:
 
-            user = await client.get_entity(username)
+            user = await client.get_entity(
+                username
+            )
 
-            allowed_users.add(user.id)
+            allowed_users.add(
+                user.id
+            )
 
             save_allowed()
 
             await event.respond(
+
                 f"✅ @{username} добавлен.\n"
                 f"Теперь Николь может отвечать этому человеку."
+
             )
 
         except Exception as e:
 
             await event.respond(
-                f"❌ Не удалось найти пользователя.\n\n{e}"
+
+                "❌ Не удалось найти пользователя.\n\n"
+                f"{e}"
+
             )
 
 
@@ -246,17 +306,28 @@ async def commands(event):
 
     elif text.startswith("/remove "):
 
-        username = text[8:].strip().replace("@", "")
+        username = (
+            text[8:]
+            .strip()
+            .replace("@", "")
+        )
 
         try:
 
-            user = await client.get_entity(username)
+            user = await client.get_entity(
+                username
+            )
 
-            allowed_users.discard(user.id)
+            allowed_users.discard(
+                user.id
+            )
 
             save_allowed()
 
-            memory.pop(user.id, None)
+            memory.pop(
+                user.id,
+                None
+            )
 
             await event.respond(
                 f"❌ @{username} удалён."
@@ -287,22 +358,39 @@ async def commands(event):
 
             try:
 
-                user = await client.get_entity(user_id)
+                user = await client.get_entity(
+                    user_id
+                )
 
-                username = getattr(user, "username", None)
+                username = getattr(
+                    user,
+                    "username",
+                    None
+                )
 
                 if username:
-                    result.append("@" + username)
+
+                    result.append(
+                        "@" + username
+                    )
+
                 else:
-                    result.append(str(user_id))
+
+                    result.append(
+                        str(user_id)
+                    )
 
             except Exception:
 
-                result.append(str(user_id))
+                result.append(
+                    str(user_id)
+                )
 
         await event.respond(
+
             "👥 Разрешённые пользователи:\n\n"
             + "\n".join(result)
+
         )
 
 
@@ -310,13 +398,22 @@ async def commands(event):
 
     elif text.startswith("/clear "):
 
-        username = text[7:].strip().replace("@", "")
+        username = (
+            text[7:]
+            .strip()
+            .replace("@", "")
+        )
 
         try:
 
-            user = await client.get_entity(username)
+            user = await client.get_entity(
+                username
+            )
 
-            memory.pop(user.id, None)
+            memory.pop(
+                user.id,
+                None
+            )
 
             await event.respond(
                 f"🧹 Память переписки с @{username} очищена."
@@ -356,10 +453,12 @@ async def commands(event):
     elif text == "/status":
 
         await event.respond(
+
             f"🤖 Николь: "
             f"{'🟢 включена' if ai_enabled else '🔴 выключена'}\n"
             f"👥 Разрешённых пользователей: {len(allowed_users)}\n"
             f"🧠 Память: {MEMORY_LIMIT} сообщений"
+
         )
 
 
@@ -402,7 +501,9 @@ async def ai_handler(event):
 
     if answer:
 
-        await event.respond(answer)
+        await event.respond(
+            answer
+        )
 
         print(
             f"📤 Николь: {answer}"
@@ -419,17 +520,25 @@ async def main():
     print("          NICOLE AI")
     print("================================")
 
-    print("Запуск Telegram...")
+    print(
+        "Запуск Telegram..."
+    )
 
-    print("🔄 Подключение к Telegram...")
+    print(
+        "🔄 Подключение к Telegram..."
+    )
 
     try:
 
         await client.connect()
 
-        print("🔗 Соединение с Telegram установлено")
+        print(
+            "🔗 Соединение с Telegram установлено"
+        )
 
-        authorized = await client.is_user_authorized()
+        authorized = (
+            await client.is_user_authorized()
+        )
 
         print(
             f"🔐 Авторизация: {authorized}"
@@ -438,7 +547,11 @@ async def main():
         if not authorized:
 
             print(
-                "❌ Telegram session НЕ авторизована"
+                "❌ Telegram session НЕ авторизована."
+            )
+
+            print(
+                "❌ Нужно создать новую Telegram session."
             )
 
             return
@@ -460,9 +573,13 @@ async def main():
 
 
     username = (
+
         "@" + me.username
+
         if me.username
+
         else me.first_name
+
     )
 
     print(
@@ -478,7 +595,9 @@ async def main():
         f"{len(allowed_users)}"
     )
 
-    print("🟢 Николь готова.")
+    print(
+        "🟢 Николь готова."
+    )
 
     await client.run_until_disconnected()
 
@@ -489,11 +608,19 @@ async def main():
 
 if __name__ == "__main__":
 
+    print(
+        "🌐 Запускаю веб-сервер..."
+    )
+
     web_thread = threading.Thread(
         target=run_web_server,
         daemon=True
     )
 
     web_thread.start()
+
+    print(
+        "🚀 Запускаю Telegram-клиент..."
+    )
 
     asyncio.run(main())
