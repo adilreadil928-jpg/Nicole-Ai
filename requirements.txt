@@ -3,3 +3,5 @@ aiohttp
 flask
 gunicorn
 python-socks[asyncio]
+dateparser
+psycopg2-binary
